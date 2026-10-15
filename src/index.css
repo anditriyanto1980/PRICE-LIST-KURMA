@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: #0b1120;
+    color: #e2e8f0;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(20, 184, 166, 0.12) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(245, 158, 11, 0.08) 0px, transparent 50%),
+      radial-gradient(at 50% 100%, rgba(14, 165, 233, 0.06) 0px, transparent 50%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Outfit', sans-serif;
+  }
+}
+
+.modern-card {
+  background: rgba(30, 41, 59, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  border-radius: 1rem;
+}
+
+.glass-panel {
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.table-row-float {
+  transition: all 0.15s ease-in-out;
+}
+.table-row-float:hover {
+  background-color: rgba(51, 65, 85, 0.55);
+}
+
+.text-gradient-gold {
+  background: linear-gradient(135deg, #FDE68A 0%, #F59E0B 40%, #FFFBEB 70%, #D97706 100%);
+  background-size: 200% auto;
+  color: #fbbf24;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shine 4s linear infinite;
+}
+
+@keyframes shine {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes marquee {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+.animate-marquee {
+  display: inline-block;
+  white-space: nowrap;
+  animation: marquee 32s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+.spreadsheet-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.spreadsheet-table th, .spreadsheet-table td {
+  border: 1px solid #334155;
+}
+
+.spreadsheet-table thead th {
+  background-color: #1e293b;
+  border-bottom: 2px solid #475569;
+}
+
+.cell-note-marker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-top: 7px solid #ef4444;
+  z-index: 10;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .modern-card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    background: none !important;
+  }
+  .text-gradient-gold {
+    -webkit-text-fill-color: black !important;
+    color: black !important;
+    text-shadow: none !important;
+  }
+  .spreadsheet-table th, .spreadsheet-table td {
+    border: 1px solid #000 !important;
+    color: black !important;
+  }
+  .spreadsheet-table thead th {
+    background-color: #f1f5f9 !important;
+    color: black !important;
+  }
+  .cell-note-marker {
+    display: none !important;
+  }
+}

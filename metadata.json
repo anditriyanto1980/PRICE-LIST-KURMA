@@ -1,0 +1,6 @@
+{
+  "name": "Price List Kurma PRO",
+  "description": "Aplikasi manajemen katalog harga dan pricelist kurma profesional dengan sistem multi-tier MT-GT, kalkulator online, manajemen stok dan multi-database tahunan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

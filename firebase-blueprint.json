@@ -1,0 +1,170 @@
+{
+  "entities": {
+    "KurmaProduct": {
+      "title": "KurmaProduct",
+      "description": "Katalog produk kurma grosir dan online beserta stok dan harga berjenjang.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Unique numeric or timestamp identifier"
+        },
+        "year": {
+          "type": "string",
+          "description": "Tahun database (misal: 2025, 2026)",
+          "maxLength": 10
+        },
+        "name": {
+          "type": "string",
+          "description": "Nama barang atau varian kurma",
+          "maxLength": 200
+        },
+        "expDate": {
+          "type": "string",
+          "description": "Tanggal kedaluwarsa format YYYY-MM-DD",
+          "maxLength": 30
+        },
+        "ecer": {
+          "type": "number",
+          "description": "Harga eceran basis"
+        },
+        "tier1": {
+          "type": "number",
+          "description": "Harga partai (500-700 dus)"
+        },
+        "tier2": {
+          "type": "number",
+          "description": "Harga tier 2 (250-499 dus)"
+        },
+        "tier3": {
+          "type": "number",
+          "description": "Harga tier 3 (100-249 dus)"
+        },
+        "tier4": {
+          "type": "number",
+          "description": "Harga tier 4 (50-99 dus)"
+        },
+        "tier5": {
+          "type": "number",
+          "description": "Harga tier 5 (25-49 dus)"
+        },
+        "tier6": {
+          "type": "number",
+          "description": "Harga tier 6 (6-24 dus)"
+        },
+        "image": {
+          "type": "string",
+          "description": "Base64 data URL atau link URL foto produk kurma"
+        },
+        "origin": {
+          "type": "string",
+          "description": "Negara asal kurma (Arab Saudi, Mesir, Palestina, dll)",
+          "maxLength": 100
+        },
+        "packaging": {
+          "type": "string",
+          "description": "Kemasan atau satuan barang (Dus 3kg, Box 500gr, dll)",
+          "maxLength": 100
+        },
+        "stockQty": {
+          "type": "number",
+          "description": "Jumlah stok fisik di gudang"
+        },
+        "partaiNote": {
+          "type": "string",
+          "description": "Catatan khusus atau syarat pesanan partai",
+          "maxLength": 500
+        },
+        "hargaAwal": {
+          "type": "number",
+          "description": "Harga patokan awal online marketplace"
+        },
+        "onlineDisc1": {
+          "type": "number",
+          "description": "Persentase diskon 1 online"
+        },
+        "onlineDisc2": {
+          "type": "number",
+          "description": "Persentase diskon 2 live online"
+        },
+        "specialDisc": {
+          "type": "number",
+          "description": "Diskon spesial tambahan online"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp pembaruan terakhir"
+        }
+      },
+      "required": ["id", "year", "name", "ecer"]
+    },
+    "CompanyNote": {
+      "title": "CompanyNote",
+      "description": "Catatan resmi operasional, rekening bank, dan ketentuan pengiriman ekspedisi.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Unique identifier catatan"
+        },
+        "year": {
+          "type": "string",
+          "description": "Tahun database",
+          "maxLength": 10
+        },
+        "title": {
+          "type": "string",
+          "description": "Judul catatan",
+          "maxLength": 150
+        },
+        "text": {
+          "type": "string",
+          "description": "Isi detail catatan atau kebijakan",
+          "maxLength": 3000
+        },
+        "date": {
+          "type": "string",
+          "description": "Tanggal pembuatan atau update"
+        }
+      },
+      "required": ["id", "year", "title", "text"]
+    },
+    "DatabaseYear": {
+      "title": "DatabaseYear",
+      "description": "Daftar tahun database kurma yang tersedia.",
+      "type": "object",
+      "properties": {
+        "year": {
+          "type": "string",
+          "description": "Label 4 angka tahun (misal: 2025)",
+          "maxLength": 10
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Waktu pembuatan tahun"
+        }
+      },
+      "required": ["year"]
+    }
+  },
+  "firestore": {
+    "/kurma_items/{itemId}": {
+      "schema": {
+        "$ref": "#/entities/KurmaProduct"
+      },
+      "description": "Katalog semua produk kurma multi-tahun yang tersinkronisasi di Firestore"
+    },
+    "/company_notes/{noteId}": {
+      "schema": {
+        "$ref": "#/entities/CompanyNote"
+      },
+      "description": "Catatan rekening pembayaran dan syarat kargo resmi"
+    },
+    "/database_years/{yearId}": {
+      "schema": {
+        "$ref": "#/entities/DatabaseYear"
+      },
+      "description": "Koleksi tahun database aktif"
+    }
+  }
+}
