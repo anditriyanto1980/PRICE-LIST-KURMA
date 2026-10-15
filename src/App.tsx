@@ -30,6 +30,7 @@ import {
   Cloud
 } from 'lucide-react';
 import { KurmaItem, NoteItem, UserRole, StatusFilter, SortOption, ActiveTab, CrudLogItem } from './types';
+import { INITIAL_ITEMS, INITIAL_NOTES } from './initialData';
 import { exportToExcel, exportElementToImage, getExpStatus } from './utils/helpers';
 import { startAmbientLoop, stopAmbientLoop } from './utils/audio';
 import { kurmaService } from './services/kurmaService';
@@ -134,55 +135,53 @@ export default function App() {
 
   const isAdmin = userRole === 'superadmin';
 
-  // --- INITIAL LOAD & MULTI-DB & FIRESTORE REALTIME SYNC ---
+  // --- INITIAL LOAD & MULTI-DB & FIRESTORE REALTIME SYNC (NO LOCALSTORAGE) ---
   useEffect(() => {
-    const savedYears = localStorage.getItem('kurma_available_years');
-    let years = ['2025'];
-    if (savedYears) {
-      try {
-        years = JSON.parse(savedYears);
-      } catch {
-        years = ['2025'];
-      }
-    }
-    setAvailableDBs(years);
-
-    const savedActive = localStorage.getItem('kurma_active_year');
-    const active = savedActive && years.includes(savedActive) ? savedActive : years[0];
-    setActiveDB(active);
-
-    const savedTitle = localStorage.getItem('kurma_app_title');
-    if (savedTitle && savedTitle !== 'PRICE LIST KURMA PRO') {
-      setAppTitle(savedTitle);
-    } else {
-      setAppTitle('EKA - PRICELIST KURMA');
-      localStorage.setItem('kurma_app_title', 'EKA - PRICELIST KURMA');
-    }
-
-    const savedMarquee = localStorage.getItem('kurma_marquee_text');
-    if (savedMarquee) setMarqueeText(savedMarquee);
-
-    loadYearData(active);
-    refreshLogs();
-
-    // CRITICAL: Validate connection to Firestore on boot
+    // 1. Validate connection to Firestore on boot
     testConnection().then((ok) => {
       setIsCloudConnected(ok);
       if (ok) {
-        showToast('Tersambung ke Cloud Database Firestore');
+        showToast('Tersambung ke Cloud Database Firestore (Realtime Live)');
       }
     });
+
+    // 2. Seed Cloud Firestore with default 2025 data if cloud database is empty
+    firestoreSync.seedInitialIfEmpty('2025', INITIAL_ITEMS, INITIAL_NOTES);
+
+    // 3. Subscribe to Database Years (Realtime across all devices)
+    const unsubYears = firestoreSync.subscribeYears((years) => {
+      if (years.length > 0) {
+        setAvailableDBs(years);
+        setActiveDB((prev) => (years.includes(prev) ? prev : years[0]));
+      }
+    });
+
+    // 4. Subscribe to App Settings (Title & Marquee - Realtime across all devices)
+    const unsubSettings = firestoreSync.subscribeSettings((settings) => {
+      if (settings.title) setAppTitle(settings.title);
+      if (settings.marquee) setMarqueeText(settings.marquee);
+    });
+
+    // 5. Subscribe to Activity Logs (Realtime across all devices)
+    const unsubLogs = firestoreSync.subscribeLogs((remoteLogs) => {
+      setLogs(remoteLogs);
+    });
+
+    return () => {
+      unsubYears();
+      unsubSettings();
+      unsubLogs();
+    };
   }, []);
 
   // Listen to Firestore real-time updates for active year
   useEffect(() => {
+    setSelectedIds(new Set());
+
     const unsubItems = firestoreSync.subscribeItems(
       activeDB,
       (remoteItems) => {
-        if (remoteItems.length > 0) {
-          setItems(remoteItems);
-          localStorage.setItem(`kurma_items_${activeDB}`, JSON.stringify(remoteItems));
-        }
+        setItems(remoteItems);
       },
       (err) => {
         console.warn('Items sync notice:', err);
@@ -192,10 +191,7 @@ export default function App() {
     const unsubNotes = firestoreSync.subscribeNotes(
       activeDB,
       (remoteNotes) => {
-        if (remoteNotes.length > 0) {
-          setNotes(remoteNotes);
-          localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(remoteNotes));
-        }
+        setNotes(remoteNotes);
       },
       (err) => {
         console.warn('Notes sync notice:', err);
@@ -208,88 +204,49 @@ export default function App() {
     };
   }, [activeDB]);
 
-  const loadYearData = (year: string) => {
-    const dataItems = kurmaService.getAll(year);
-    setItems(dataItems);
-
-    const rawNotes = localStorage.getItem(`kurma_notes_${year}`);
-    if (rawNotes) {
-      try {
-        setNotes(JSON.parse(rawNotes));
-      } catch {
-        setNotes([]);
-      }
-    } else {
-      const defaultNotes = [
-        {
-          id: 1,
-          title: 'Rekening Pembayaran Resmi',
-          text: 'Rekening Pembayaran Resmi Perusahaan:\n• BCA: 873-509-2211 a.n PT BERKAH KURMA NUSANTARA\n• Mandiri: 137-00-9882-1200 a.n PT BERKAH KURMA NUSANTARA\n• BSI: 719-203-8819 a.n PT BERKAH KURMA NUSANTARA\n*Konfirmasi bukti transfer ke nomor WhatsApp Admin Finance sebelum jam 15:00 WIB.',
-          date: new Date().toISOString()
-        },
-        {
-          id: 2,
-          title: 'Syarat Ketentuan & Ekspedisi Kargo',
-          text: 'Ketentuan Pengiriman & Kargo:\n1. Harga tertera adalah Franco Gudang Jakarta & Surabaya.\n2. Minimal order Partai Tier 1: 500 Dus / Kg (Gratis antar Jabodetabek/Surabaya area).\n3. Pengiriman luar kota bekerjasama dengan Indah Cargo, Dakota Cargo, Baraka Sarana Tama, dan KIB Cepat.',
-          date: new Date().toISOString()
-        }
-      ];
-      setNotes(defaultNotes);
-      localStorage.setItem(`kurma_notes_${year}`, JSON.stringify(defaultNotes));
-    }
-  };
-
-  const refreshLogs = () => {
-    setLogs(kurmaService.getLogs());
-  };
-
   const handleSwitchDB = (year: string) => {
     setActiveDB(year);
-    localStorage.setItem('kurma_active_year', year);
-    loadYearData(year);
     setSelectedIds(new Set());
-    showToast(`Database Tahun ${year} dimuat!`);
+    showToast(`Database Cloud Tahun ${year} dimuat!`);
   };
 
-  const handleAddNewDB = () => {
+  const handleAddNewDB = async () => {
     const newYear = prompt('Masukkan Tahun Database Baru (contoh: 2026, 2027):');
     if (newYear && newYear.length === 4 && !isNaN(Number(newYear))) {
       if (availableDBs.includes(newYear)) {
-        showToast('Database tahun tersebut sudah ada!', 'warning');
+        showToast('Database tahun tersebut sudah ada di Cloud!', 'warning');
         return;
       }
-      const updated = [...availableDBs, newYear].sort();
-      setAvailableDBs(updated);
-      localStorage.setItem('kurma_available_years', JSON.stringify(updated));
-      handleSwitchDB(newYear);
-      showToast(`Database ${newYear} berhasil dibuat!`);
+      try {
+        await firestoreSync.saveYear(newYear);
+        setActiveDB(newYear);
+        showToast(`Database Cloud ${newYear} berhasil dibuat & tersinkronisasi!`);
+      } catch {
+        showToast('Gagal membuat database baru di Cloud', 'error');
+      }
     } else if (newYear !== null) {
       showToast('Format tahun tidak valid (harus 4 angka)', 'error');
     }
   };
 
-  const handleDeleteCurrentDB = () => {
+  const handleDeleteCurrentDB = async () => {
     if (availableDBs.length <= 1) {
       showToast('Tidak dapat menghapus database tahun terakhir!', 'error');
       return;
     }
     if (
       confirm(
-        `PERINGATAN: Apakah Anda yakin ingin menghapus seluruh database tahun ${activeDB}? Semua data produk dan catatan tahun ini akan hilang permanen!`
+        `PERINGATAN: Apakah Anda yakin ingin menghapus seluruh database tahun ${activeDB}? Semua data produk dan catatan tahun ini di Cloud Firestore akan hilang permanen!`
       )
     ) {
-      localStorage.removeItem(`kurma_items_${activeDB}`);
-      localStorage.removeItem(`kurma_notes_${activeDB}`);
-
-      const updated = availableDBs.filter((y) => y !== activeDB);
-      setAvailableDBs(updated);
-      localStorage.setItem('kurma_available_years', JSON.stringify(updated));
-
-      const fallback = updated[0];
-      setActiveDB(fallback);
-      localStorage.setItem('kurma_active_year', fallback);
-      loadYearData(fallback);
-      showToast(`Database ${activeDB} telah dihapus.`);
+      try {
+        await firestoreSync.deleteYear(activeDB);
+        const fallback = availableDBs.find((y) => y !== activeDB) || '2025';
+        setActiveDB(fallback);
+        showToast(`Database ${activeDB} telah dihapus dari Cloud Firestore.`);
+      } catch {
+        showToast('Gagal menghapus database dari Cloud', 'error');
+      }
     }
   };
 
@@ -340,129 +297,141 @@ export default function App() {
     }
   };
 
-  // --- CRUD: CREATE & UPDATE ---
-  const handleSaveItem = (itemData: Partial<KurmaItem>) => {
-    if (editingItem) {
-      // UPDATE
-      const updated = kurmaService.update(activeDB, editingItem.id, itemData);
-      setItems(updated);
-      refreshLogs();
-      showToast(`Produk "${itemData.name || editingItem.name}" berhasil diperbarui!`);
-    } else {
-      // CREATE
-      const { item, all } = kurmaService.create(activeDB, itemData);
-      setItems(all);
-      refreshLogs();
-      showToast(`Produk baru "${item.name}" berhasil ditambahkan!`);
+  // --- CRUD: CREATE & UPDATE VIA CLOUD FIRESTORE ---
+  const handleSaveItem = async (itemData: Partial<KurmaItem>) => {
+    try {
+      if (editingItem) {
+        // UPDATE in Cloud Firestore
+        await kurmaService.update(activeDB, editingItem.id, itemData, items);
+        showToast(`Produk "${itemData.name || editingItem.name}" berhasil diperbarui di Cloud!`);
+      } else {
+        // CREATE in Cloud Firestore
+        const created = await kurmaService.create(activeDB, itemData);
+        showToast(`Produk baru "${created.name}" berhasil ditambahkan ke Cloud!`);
+      }
+    } catch {
+      showToast('Gagal menyimpan produk ke Cloud Firestore', 'error');
     }
     setEditingItem(null);
   };
 
   // --- CRUD: DUPLICATE (FAST CREATE) ---
-  const handleDuplicateItem = (item: KurmaItem) => {
-    const updated = kurmaService.duplicate(activeDB, item.id);
-    setItems(updated);
-    refreshLogs();
-    showToast(`Produk "${item.name}" berhasil diduplikat!`);
+  const handleDuplicateItem = async (item: KurmaItem) => {
+    try {
+      const copy = await kurmaService.duplicate(activeDB, item);
+      showToast(`Produk "${copy.name}" berhasil diduplikat di Cloud!`);
+    } catch {
+      showToast('Gagal menduplikasi produk ke Cloud', 'error');
+    }
   };
 
   // --- CRUD: DELETE (WITH UNDO) ---
-  const handleDeleteItem = (id: number) => {
+  const handleDeleteItem = async (id: number) => {
     const target = items.find((i) => i.id === id);
     if (!target) return;
 
-    if (confirm(`Hapus produk "${target.name}" dari katalog kurma?`)) {
-      const { deletedItem, all } = kurmaService.delete(activeDB, id);
-      setItems(all);
-      refreshLogs();
+    if (confirm(`Hapus produk "${target.name}" dari katalog kurma di Cloud Firestore?`)) {
+      try {
+        await kurmaService.delete(activeDB, id, target.name);
 
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
 
-      // Show toast with Undo action
-      if (deletedItem) {
-        showToast(`Produk "${deletedItem.name}" dihapus.`, 'warning', {
+        // Show toast with Undo action
+        showToast(`Produk "${target.name}" dihapus dari Cloud.`, 'warning', {
           label: 'Urungkan (Undo)',
-          onClick: () => {
-            const restored = kurmaService.restore(activeDB, deletedItem);
-            setItems(restored);
-            refreshLogs();
-            showToast(`Produk "${deletedItem.name}" dipulihkan!`);
+          onClick: async () => {
+            try {
+              await kurmaService.restore(activeDB, target);
+              showToast(`Produk "${target.name}" dipulihkan ke Cloud!`);
+            } catch {
+              showToast('Gagal memulihkan produk', 'error');
+            }
           }
         });
+      } catch {
+        showToast('Gagal menghapus produk dari Cloud', 'error');
       }
     }
   };
 
   // --- CRUD: BULK DELETE ---
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
-    if (confirm(`Hapus ${count} produk kurma terpilih sekaligus?`)) {
-      const updated = kurmaService.bulkDelete(activeDB, selectedIds);
-      setItems(updated);
-      setSelectedIds(new Set());
-      refreshLogs();
-      showToast(`${count} produk berhasil dihapus secara massal!`);
+    if (confirm(`Hapus ${count} produk kurma terpilih sekaligus dari Cloud Firestore?`)) {
+      try {
+        await kurmaService.bulkDelete(activeDB, selectedIds);
+        setSelectedIds(new Set());
+        showToast(`${count} produk berhasil dihapus secara massal dari Cloud!`);
+      } catch {
+        showToast('Gagal menghapus massal produk', 'error');
+      }
     }
   };
 
   // --- CRUD: QUICK INLINE FIELD UPDATE ---
-  const handleUpdateOnlineField = (id: number, field: keyof KurmaItem, value: number) => {
-    const updated = kurmaService.update(activeDB, id, { [field]: value });
-    setItems(updated);
-    refreshLogs();
+  const handleUpdateOnlineField = async (id: number, field: keyof KurmaItem, value: number) => {
+    try {
+      await kurmaService.update(activeDB, id, { [field]: value }, items);
+    } catch {
+      showToast('Gagal memperbarui harga online', 'error');
+    }
   };
 
   // --- CRUD: QUICK STOCK STEPPER (+ / -) ---
-  const handleQuickUpdateStock = (id: number, delta: number) => {
+  const handleQuickUpdateStock = async (id: number, delta: number) => {
     const target = items.find((i) => i.id === id);
     if (!target) return;
     const newQty = Math.max(0, (target.stockQty ?? 50) + delta);
-    const updated = kurmaService.update(activeDB, id, { stockQty: newQty });
-    setItems(updated);
-    refreshLogs();
+    try {
+      await kurmaService.update(activeDB, id, { stockQty: newQty }, items);
+    } catch {
+      showToast('Gagal memperbarui stok di Cloud', 'error');
+    }
   };
 
-  const handleApplyGlobalDisc = (disc1: number, disc2: number) => {
+  const handleApplyGlobalDisc = async (disc1: number, disc2: number) => {
     if (
       confirm(
-        `Terapkan diskon massal Disc 1: ${disc1}% dan Disc 2: ${disc2}% ke SEMUA ${items.length} produk online?`
+        `Terapkan diskon massal Disc 1: ${disc1}% dan Disc 2: ${disc2}% ke SEMUA ${items.length} produk online di Cloud?`
       )
     ) {
-      const updated = items.map((i) => ({
-        ...i,
-        onlineDisc1: disc1,
-        onlineDisc2: disc2
-      }));
-      setItems(updated);
-      localStorage.setItem(`kurma_items_${activeDB}`, JSON.stringify(updated));
-      kurmaService.addLog('UPDATE', 'Diskon Massal', `Disc 1: ${disc1}%, Disc 2: ${disc2}%`);
-      refreshLogs();
-      showToast('Diskon massal berhasil diterapkan ke semua produk!');
+      try {
+        await kurmaService.applyGlobalDiscount(activeDB, items, disc1, disc2);
+        showToast('Diskon massal berhasil diterapkan ke Cloud Firestore!');
+      } catch {
+        showToast('Gagal menerapkan diskon massal', 'error');
+      }
     }
   };
 
-  const handleResetToDefault = () => {
-    if (confirm('Reset seluruh data kurma tahun ini ke data bawaan awal? Data Anda akan digantikan.')) {
-      const defaultItems = kurmaService.resetToDefault(activeDB);
-      setItems(defaultItems);
-      refreshLogs();
-      showToast('Database berhasil direset ke data kurma awal!');
+  const handleResetToDefault = async () => {
+    if (confirm('Reset seluruh data kurma tahun ini ke data bawaan awal di Cloud Firestore? Data Anda akan digantikan.')) {
+      try {
+        await kurmaService.resetToDefault(activeDB);
+        showToast('Database Cloud berhasil direset ke data kurma awal!');
+      } catch {
+        showToast('Gagal mereset database Cloud', 'error');
+      }
     }
   };
 
-  // Reordering
-  const handleReorderItems = (startIndex: number, endIndex: number) => {
+  // Reordering (Persisted to Cloud Firestore)
+  const handleReorderItems = async (startIndex: number, endIndex: number) => {
     const reordered = Array.from(items);
     const [moved] = reordered.splice(startIndex, 1);
     reordered.splice(endIndex, 0, moved);
     setItems(reordered);
-    localStorage.setItem(`kurma_items_${activeDB}`, JSON.stringify(reordered));
-    showToast('Urutan produk diperbarui');
+    try {
+      await kurmaService.reorder(activeDB, reordered);
+      showToast('Urutan produk tersimpan ke Cloud Firestore');
+    } catch {
+      showToast('Gagal menyimpan urutan ke Cloud', 'error');
+    }
   };
 
   // Selection
@@ -505,45 +474,47 @@ export default function App() {
     }, 2500);
   };
 
-  // Notes
-  const handleAddNote = (title: string, text: string) => {
+  // Notes via Cloud Firestore
+  const handleAddNote = async (title: string, text: string) => {
     const newNote: NoteItem = {
       id: Date.now(),
       title,
       text,
       date: new Date().toISOString()
     };
-    const updated = [newNote, ...notes];
-    setNotes(updated);
-    localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(updated));
-    firestoreSync.saveNote(activeDB, newNote).catch((e) => console.warn('Firestore note sync error:', e));
-    showToast('Catatan baru ditambahkan!');
-  };
-
-  const handleUpdateNote = (id: number, title: string, text: string) => {
-    const updated = notes.map((n) => (n.id === id ? { ...n, title, text } : n));
-    setNotes(updated);
-    localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(updated));
-    const target = updated.find((n) => n.id === id);
-    if (target) {
-      firestoreSync.saveNote(activeDB, target).catch((e) => console.warn('Firestore note update error:', e));
+    try {
+      await firestoreSync.saveNote(activeDB, newNote);
+      showToast('Catatan baru tersimpan di Cloud Firestore!');
+    } catch {
+      showToast('Gagal menyimpan catatan ke Cloud', 'error');
     }
-    showToast('Catatan berhasil diperbarui!');
   };
 
-  const handleDeleteNote = (id: number) => {
-    const updated = notes.filter((n) => n.id !== id);
-    setNotes(updated);
-    localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(updated));
-    firestoreSync.deleteNote(activeDB, id).catch((e) => console.warn('Firestore note delete error:', e));
-    showToast('Catatan berhasil dihapus.');
+  const handleUpdateNote = async (id: number, title: string, text: string) => {
+    try {
+      await firestoreSync.saveNote(activeDB, { id, title, text, date: new Date().toISOString() });
+      showToast('Catatan berhasil diperbarui di Cloud Firestore!');
+    } catch {
+      showToast('Gagal memperbarui catatan di Cloud', 'error');
+    }
   };
 
-  const handleSavePartaiNote = (itemId: number, note: string) => {
-    const updated = kurmaService.update(activeDB, itemId, { partaiNote: note });
-    setItems(updated);
-    refreshLogs();
-    showToast('Catatan partai tersimpan!');
+  const handleDeleteNote = async (id: number) => {
+    try {
+      await firestoreSync.deleteNote(activeDB, id);
+      showToast('Catatan berhasil dihapus dari Cloud Firestore.');
+    } catch {
+      showToast('Gagal menghapus catatan dari Cloud', 'error');
+    }
+  };
+
+  const handleSavePartaiNote = async (itemId: number, note: string) => {
+    try {
+      await kurmaService.update(activeDB, itemId, { partaiNote: note }, items);
+      showToast('Catatan partai tersimpan di Cloud Firestore!');
+    } catch {
+      showToast('Gagal menyimpan catatan partai ke Cloud', 'error');
+    }
   };
 
   // Backups
@@ -573,24 +544,25 @@ export default function App() {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           const data = JSON.parse(event.target?.result as string);
           if (data && Array.isArray(data.items)) {
             if (
               confirm(
-                `Restore file backup ini ke Database ${activeDB}? Data saat ini akan digantikan.`
+                `Restore file backup ini ke Cloud Database ${activeDB}? Semua perangkat akan menerima data ini secara real-time.`
               )
             ) {
-              setItems(data.items);
-              localStorage.setItem(`kurma_items_${activeDB}`, JSON.stringify(data.items));
-              if (Array.isArray(data.notes)) {
-                setNotes(data.notes);
-                localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(data.notes));
+              for (const it of data.items) {
+                await firestoreSync.saveItem(activeDB, it);
               }
-              kurmaService.addLog('RESTORE', 'Restore File Backup', `${data.items.length} produk diimpor`);
-              refreshLogs();
-              showToast('Data berhasil direstore dari file backup!');
+              if (Array.isArray(data.notes)) {
+                for (const n of data.notes) {
+                  await firestoreSync.saveNote(activeDB, n);
+                }
+              }
+              await kurmaService.addLog('RESTORE', 'Restore File Backup', `${data.items.length} produk diimpor ke Cloud`);
+              showToast('Data berhasil direstore ke Cloud Firestore!');
             }
           } else {
             showToast('Format file backup tidak valid!', 'error');
@@ -737,7 +709,20 @@ export default function App() {
       {/* TOP MARQUEE ANNOUNCEMENT BAR */}
       <div className="w-full bg-slate-950/90 border-b border-slate-800 py-1.5 overflow-hidden flex items-center no-print">
         <div className="w-full overflow-hidden relative h-5">
-          <div className="absolute w-full h-full flex items-center animate-marquee cursor-pointer">
+          <div
+            className="absolute w-full h-full flex items-center animate-marquee cursor-pointer"
+            onClick={() => {
+              if (isAdmin) {
+                const newMarquee = prompt('Edit Teks Pengumuman Berjalan (Marquee):', marqueeText);
+                if (newMarquee !== null && newMarquee.trim()) {
+                  setMarqueeText(newMarquee);
+                  firestoreSync.saveSettings(appTitle, newMarquee);
+                  showToast('Teks pengumuman tersimpan di Cloud & tersinkron ke semua perangkat!');
+                }
+              }
+            }}
+            title={isAdmin ? 'Klik untuk mengedit pengumuman berjalan (Tersinkron ke semua device)' : undefined}
+          >
             <span className="text-xs font-bold text-amber-400 mx-6 tracking-wider uppercase font-heading">
               {marqueeText}
             </span>
@@ -759,12 +744,13 @@ export default function App() {
                   type="text"
                   value={appTitle}
                   onChange={(e) => {
-                    setAppTitle(e.target.value);
-                    localStorage.setItem('kurma_app_title', e.target.value);
+                    const val = e.target.value;
+                    setAppTitle(val);
+                    firestoreSync.saveSettings(val, marqueeText);
                   }}
                   style={{ color: '#ffffff', WebkitTextFillColor: '#ffffff' }}
                   className="text-xl sm:text-2xl font-heading font-extrabold text-white !text-white bg-transparent border-none focus:ring-0 tracking-wide cursor-text drop-shadow min-w-[280px] hover:opacity-90 transition-opacity"
-                  title="Klik untuk mengedit judul pricelist"
+                  title="Klik untuk mengedit judul pricelist (Tersinkronisasi Realtime ke semua perangkat)"
                 />
 
                 {/* Multi-DB Year Selector */}
@@ -869,10 +855,7 @@ export default function App() {
               {/* CRUD Activity Log */}
               <button
                 type="button"
-                onClick={() => {
-                  refreshLogs();
-                  setIsLogsOpen(true);
-                }}
+                onClick={() => setIsLogsOpen(true)}
                 className="bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
                 title="Lihat Riwayat Transaksi CRUD"
               >
@@ -1360,14 +1343,16 @@ export default function App() {
         }}
         onDuplicate={handleDuplicateItem}
         onDelete={handleDeleteItem}
-        onUpdateImage={(id, base64) => {
-          const updated = kurmaService.update(activeDB, id, { image: base64 });
-          setItems(updated);
-          if (detailItem && detailItem.id === id) {
-            setDetailItem({ ...detailItem, image: base64 });
+        onUpdateImage={async (id, base64) => {
+          try {
+            await kurmaService.update(activeDB, id, { image: base64 }, items);
+            if (detailItem && detailItem.id === id) {
+              setDetailItem({ ...detailItem, image: base64 });
+            }
+            showToast('Foto produk berhasil diperbarui di Cloud!');
+          } catch {
+            showToast('Gagal memperbarui foto', 'error');
           }
-          refreshLogs();
-          showToast('Foto produk berhasil diperbarui!');
         }}
         isAdmin={isAdmin}
       />
@@ -1376,10 +1361,9 @@ export default function App() {
         logs={logs}
         isOpen={isLogsOpen}
         onClose={() => setIsLogsOpen(false)}
-        onClearLogs={() => {
-          kurmaService.clearLogs();
-          refreshLogs();
-          showToast('Riwayat aktivitas dibersihkan');
+        onClearLogs={async () => {
+          await kurmaService.clearLogs();
+          showToast('Riwayat aktivitas dibersihkan di Cloud');
         }}
       />
 
@@ -1401,18 +1385,21 @@ export default function App() {
         isTextOpen={isTextImportOpen}
         onCloseExcel={() => setIsExcelImportOpen(false)}
         onCloseText={() => setIsTextImportOpen(false)}
-        onImportExcelItems={(newItems) => {
-          newItems.forEach((it) => kurmaService.create(activeDB, it));
-          loadYearData(activeDB);
-          refreshLogs();
+        onImportExcelItems={async (newItems) => {
+          for (const it of newItems) {
+            await kurmaService.create(activeDB, it);
+          }
+          showToast(`${newItems.length} produk Excel berhasil diimpor ke Cloud!`);
         }}
-        onRestoreBackup={(restoredItems, restoredNotes) => {
-          setItems(restoredItems);
-          localStorage.setItem(`kurma_items_${activeDB}`, JSON.stringify(restoredItems));
-          setNotes(restoredNotes);
-          localStorage.setItem(`kurma_notes_${activeDB}`, JSON.stringify(restoredNotes));
-          kurmaService.addLog('RESTORE', 'Restore Teks JSON', `${restoredItems.length} produk diimpor`);
-          refreshLogs();
+        onRestoreBackup={async (restoredItems, restoredNotes) => {
+          for (const it of restoredItems) {
+            await firestoreSync.saveItem(activeDB, it);
+          }
+          for (const n of restoredNotes) {
+            await firestoreSync.saveNote(activeDB, n);
+          }
+          await kurmaService.addLog('RESTORE', 'Restore Teks JSON', `${restoredItems.length} produk diimpor ke Cloud`);
+          showToast('Data teks berhasil direstore ke Cloud Firestore!');
         }}
         showToast={showToast}
       />

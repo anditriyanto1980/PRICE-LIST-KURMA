@@ -11,10 +11,12 @@ import {
   setDoc,
   deleteDoc,
   getDocs,
-  writeBatch
+  writeBatch,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { KurmaItem, NoteItem } from './types';
+import { KurmaItem, NoteItem, CrudLogItem } from './types';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -23,7 +25,7 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
-// Error Handling Specification
+// Error Handling Specification conforming to SKILL.md
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -75,22 +77,21 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 export async function testConnection(): Promise<boolean> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log('Firebase Firestore connection test successful.');
+    console.log('Firebase Firestore live connection verified.');
     return true;
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration: client is offline.');
       return false;
     }
-    // Expected if doc doesn't exist, but connection was made to server
     return true;
   }
 }
 
-// --- FIRESTORE REALTIME SYNC & CRUD METHODS ---
+// --- 100% PURE FIRESTORE CLOUD REALTIME REPOSITORY ---
 
 export const firestoreSync = {
-  // Listen to Kurma Items for a specific year in realtime
+  // 1. Subscribe to Kurma Items (Realtime across all devices)
   subscribeItems(
     year: string,
     onData: (items: KurmaItem[]) => void,
@@ -105,6 +106,15 @@ export const firestoreSync = {
         snapshot.forEach((docSnap) => {
           list.push(docSnap.data() as KurmaItem);
         });
+        // Sort by order or id descending
+        list.sort((a, b) => {
+          if (a.order !== undefined && b.order !== undefined) {
+            return a.order - b.order;
+          }
+          if (a.order !== undefined) return -1;
+          if (b.order !== undefined) return 1;
+          return b.id - a.id;
+        });
         onData(list);
       },
       (error) => {
@@ -114,7 +124,7 @@ export const firestoreSync = {
     );
   },
 
-  // Listen to Company Notes for a specific year in realtime
+  // 2. Subscribe to Company Notes (Realtime across all devices)
   subscribeNotes(
     year: string,
     onData: (notes: NoteItem[]) => void,
@@ -129,6 +139,7 @@ export const firestoreSync = {
         snapshot.forEach((docSnap) => {
           list.push(docSnap.data() as NoteItem);
         });
+        list.sort((a, b) => b.id - a.id);
         onData(list);
       },
       (error) => {
@@ -138,7 +149,108 @@ export const firestoreSync = {
     );
   },
 
-  // Save or update an item in Firestore
+  // 3. Subscribe to Database Years (Realtime across all devices)
+  subscribeYears(
+    onData: (years: string[]) => void,
+    onError?: (err: any) => void
+  ) {
+    const colPath = 'database_years';
+    return onSnapshot(
+      collection(db, colPath),
+      (snapshot) => {
+        const list: string[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && data.year) list.push(String(data.year));
+        });
+        if (list.length === 0) list.push('2025');
+        list.sort();
+        onData(list);
+      },
+      (error) => {
+        if (onError) onError(error);
+        handleFirestoreError(error, OperationType.GET, colPath);
+      }
+    );
+  },
+
+  // 4. Subscribe to App Settings (Title, Marquee - Realtime across all devices)
+  subscribeSettings(
+    onData: (settings: { title: string; marquee: string }) => void,
+    onError?: (err: any) => void
+  ) {
+    const docPath = 'app_settings/general';
+    return onSnapshot(
+      doc(db, 'app_settings', 'general'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          onData({
+            title: data.title || 'EKA - PRICELIST KURMA',
+            marquee: data.marquee || '⚠️ SEBELUM MEMAKAI APLIKASI INI SEBAIKNYA TARIK NAFAS DAN JANGAN HEMPASKAN 5 MENIT, NISCAYA HARGA YANG TERTERA 100% AKURAT, PERCAYALAH, PERCAYALAH, PERCAYALAH !!! ⚠️'
+          });
+        }
+      },
+      (error) => {
+        if (onError) onError(error);
+        handleFirestoreError(error, OperationType.GET, docPath);
+      }
+    );
+  },
+
+  // 5. Subscribe to Activity Logs (Realtime across all devices)
+  subscribeLogs(
+    onData: (logs: CrudLogItem[]) => void,
+    onError?: (err: any) => void
+  ) {
+    const colPath = 'crud_logs';
+    const q = query(collection(db, colPath), limit(50));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: CrudLogItem[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as CrudLogItem);
+        });
+        // Sort descending by id/timestamp
+        list.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+        onData(list);
+      },
+      (error) => {
+        if (onError) onError(error);
+        handleFirestoreError(error, OperationType.GET, colPath);
+      }
+    );
+  },
+
+  async reorderItems(year: string, orderedItems: KurmaItem[]) {
+    try {
+      const batch = writeBatch(db);
+      orderedItems.forEach((item, index) => {
+        const docRef = doc(db, 'kurma_items', `${year}_${item.id}`);
+        batch.set(docRef, { ...item, order: index, year, updatedAt: new Date().toISOString() }, { merge: true });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'kurma_items (reorder)');
+    }
+  },
+
+  async bulkUpdateItems(year: string, updates: { id: number; changes: Partial<KurmaItem> }[]) {
+    try {
+      const batch = writeBatch(db);
+      updates.forEach(({ id, changes }) => {
+        const docRef = doc(db, 'kurma_items', `${year}_${id}`);
+        batch.set(docRef, { ...changes, updatedAt: new Date().toISOString() }, { merge: true });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'kurma_items (bulk update)');
+    }
+  },
+
+  // --- MUTATION METHODS (WRITE DIRECTLY TO CLOUD FIRESTORE) ---
+
   async saveItem(year: string, item: KurmaItem) {
     const docId = `${year}_${item.id}`;
     const docRef = doc(db, 'kurma_items', docId);
@@ -149,7 +261,6 @@ export const firestoreSync = {
     }
   },
 
-  // Delete an item from Firestore
   async deleteItem(year: string, itemId: number) {
     const docId = `${year}_${itemId}`;
     const docRef = doc(db, 'kurma_items', docId);
@@ -160,7 +271,6 @@ export const firestoreSync = {
     }
   },
 
-  // Bulk delete items from Firestore
   async bulkDeleteItems(year: string, itemIds: number[]) {
     try {
       const batch = writeBatch(db);
@@ -174,7 +284,6 @@ export const firestoreSync = {
     }
   },
 
-  // Save or update note in Firestore
   async saveNote(year: string, note: NoteItem) {
     const docId = `${year}_${note.id}`;
     const docRef = doc(db, 'company_notes', docId);
@@ -185,7 +294,6 @@ export const firestoreSync = {
     }
   },
 
-  // Delete note from Firestore
   async deleteNote(year: string, noteId: number) {
     const docId = `${year}_${noteId}`;
     const docRef = doc(db, 'company_notes', docId);
@@ -196,13 +304,95 @@ export const firestoreSync = {
     }
   },
 
-  // Seed / Sync local items to Firestore if collection is empty
+  async saveYear(year: string) {
+    const docRef = doc(db, 'database_years', year);
+    try {
+      await setDoc(docRef, { year, createdAt: new Date().toISOString() });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `database_years/${year}`);
+    }
+  },
+
+  async deleteYear(year: string) {
+    try {
+      const yearDocRef = doc(db, 'database_years', year);
+      await deleteDoc(yearDocRef);
+
+      // Clean up items for that year
+      const itemsQuery = query(collection(db, 'kurma_items'), where('year', '==', year));
+      const itemsSnap = await getDocs(itemsQuery);
+      const batch = writeBatch(db);
+      itemsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+
+      // Clean up notes for that year
+      const notesQuery = query(collection(db, 'company_notes'), where('year', '==', year));
+      const notesSnap = await getDocs(notesQuery);
+      notesSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `database_years/${year}`);
+    }
+  },
+
+  async saveSettings(title: string, marquee: string) {
+    const docRef = doc(db, 'app_settings', 'general');
+    try {
+      await setDoc(docRef, { title, marquee, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'app_settings/general');
+    }
+  },
+
+  async addLog(action: CrudLogItem['action'], itemName: string, details?: string) {
+    const logId = Date.now().toString() + Math.random().toString(36).substring(2, 6);
+    const docRef = doc(db, 'crud_logs', logId);
+    try {
+      await setDoc(docRef, {
+        id: logId,
+        action,
+        itemName,
+        details: details || '',
+        timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      });
+    } catch (error) {
+      console.warn('Log write notice:', error);
+    }
+  },
+
+  async clearLogs() {
+    try {
+      const snap = await getDocs(collection(db, 'crud_logs'));
+      const batch = writeBatch(db);
+      snap.forEach((docSnap) => batch.delete(docSnap.ref));
+      await batch.commit();
+    } catch (error) {
+      console.warn('Clear logs notice:', error);
+    }
+  },
+
+  // Seed default data directly into Cloud Firestore if cloud database is empty
   async seedInitialIfEmpty(year: string, initialItems: KurmaItem[], initialNotes: NoteItem[]) {
     try {
+      // 1. Ensure year 2025 exists
+      await setDoc(doc(db, 'database_years', year), { year, createdAt: new Date().toISOString() }, { merge: true });
+
+      // 2. Ensure general app settings exist with EKA - PRICELIST KURMA
+      await setDoc(
+        doc(db, 'app_settings', 'general'),
+        {
+          title: 'EKA - PRICELIST KURMA',
+          marquee: '⚠️ SEBELUM MEMAKAI APLIKASI INI SEBAIKNYA TARIK NAFAS DAN JANGAN HEMPASKAN 5 MENIT, NISCAYA HARGA YANG TERTERA 100% AKURAT, PERCAYALAH, PERCAYALAH, PERCAYALAH !!! ⚠️',
+          updatedAt: new Date().toISOString()
+        },
+        { merge: true }
+      );
+
+      // 3. Check items
       const q = query(collection(db, 'kurma_items'), where('year', '==', year));
       const snap = await getDocs(q);
       if (snap.empty && initialItems.length > 0) {
-        console.log(`Seeding initial kurma items to Firestore for year ${year}...`);
+        console.log(`Menyimpan data kurma awal ke Cloud Firestore untuk tahun ${year}...`);
         const batch = writeBatch(db);
         initialItems.forEach((it) => {
           const docRef = doc(db, 'kurma_items', `${year}_${it.id}`);
@@ -215,7 +405,7 @@ export const firestoreSync = {
         await batch.commit();
       }
     } catch (error) {
-      console.warn('Initial seeding note:', error);
+      console.warn('Seeding note:', error);
     }
   }
 };

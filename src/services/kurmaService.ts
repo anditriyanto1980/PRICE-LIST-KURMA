@@ -1,35 +1,10 @@
-import { KurmaItem, NoteItem, CrudLogItem } from '../types';
+import { KurmaItem, CrudLogItem } from '../types';
 import { INITIAL_ITEMS, INITIAL_NOTES } from '../initialData';
 import { firestoreSync } from '../firebase';
 
-const getItemsKey = (year: string) => `kurma_items_${year}`;
-const getNotesKey = (year: string) => `kurma_notes_${year}`;
-const LOGS_KEY = 'kurma_crud_logs';
-
 export const kurmaService = {
-  // --- ITEMS (CRUD) ---
-  getAll(year: string): KurmaItem[] {
-    const raw = localStorage.getItem(getItemsKey(year));
-    if (!raw) {
-      localStorage.setItem(getItemsKey(year), JSON.stringify(INITIAL_ITEMS));
-      // Seed to firestore if empty
-      firestoreSync.seedInitialIfEmpty(year, INITIAL_ITEMS, INITIAL_NOTES);
-      return INITIAL_ITEMS;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_ITEMS;
-    }
-  },
-
-  getById(year: string, id: number): KurmaItem | undefined {
-    const items = this.getAll(year);
-    return items.find((i) => i.id === id);
-  },
-
-  create(year: string, itemData: Partial<KurmaItem>): { item: KurmaItem; all: KurmaItem[] } {
-    const items = this.getAll(year);
+  // CREATE: Direct write to Cloud Firestore (real-time broadcast to all devices)
+  async create(year: string, itemData: Partial<KurmaItem>): Promise<KurmaItem> {
     const newItem: KurmaItem = {
       id: itemData.id || Date.now(),
       name: itemData.name || 'Produk Kurma Baru',
@@ -50,154 +25,89 @@ export const kurmaService = {
       category: itemData.category || 'Kering',
       origin: itemData.origin || 'Timur Tengah',
       packaging: itemData.packaging || 'Dus',
-      stockQty: Number(itemData.stockQty) || 50
+      stockQty: Number(itemData.stockQty) || 50,
+      order: itemData.order ?? 0
     };
 
-    const updated = [newItem, ...items];
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
+    // Save directly to Cloud Firestore
+    await firestoreSync.saveItem(year, newItem);
+    await firestoreSync.addLog('CREATE', newItem.name, `Harga Ecer: Rp ${newItem.ecer.toLocaleString('id-ID')}, Stok: ${newItem.stockQty}`);
 
-    // Persist to Cloud Firestore
-    firestoreSync.saveItem(year, newItem).catch((err) => {
-      console.warn('Firestore sync create warning:', err);
-    });
-
-    this.addLog('CREATE', newItem.name, `Harga Ecer: Rp ${newItem.ecer.toLocaleString('id-ID')}, Stok: ${newItem.stockQty}`);
-    return { item: newItem, all: updated };
+    return newItem;
   },
 
-  update(year: string, id: number, changes: Partial<KurmaItem>): KurmaItem[] {
-    const items = this.getAll(year);
-    const index = items.findIndex((i) => i.id === id);
-    if (index === -1) return items;
+  // UPDATE: Direct update in Cloud Firestore
+  async update(year: string, id: number, changes: Partial<KurmaItem>, currentItems?: KurmaItem[]): Promise<void> {
+    const target = currentItems?.find((i) => i.id === id);
+    const updatedItem: KurmaItem = target
+      ? { ...target, ...changes, id }
+      : ({ ...changes, id } as KurmaItem);
 
-    const old = items[index];
-    const updatedItem: KurmaItem = {
-      ...old,
-      ...changes,
-      id // preserve ID
-    };
-
-    const updated = [...items];
-    updated[index] = updatedItem;
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
-
-    // Persist to Cloud Firestore
-    firestoreSync.saveItem(year, updatedItem).catch((err) => {
-      console.warn('Firestore sync update warning:', err);
-    });
-
-    this.addLog('UPDATE', updatedItem.name, `Data diperbarui (Ecer: Rp ${updatedItem.ecer.toLocaleString('id-ID')})`);
-    return updated;
+    await firestoreSync.saveItem(year, updatedItem);
+    const name = changes.name || target?.name || `Produk #${id}`;
+    await firestoreSync.addLog('UPDATE', name, `Pembaruan data via Cloud Firestore (${year})`);
   },
 
-  delete(year: string, id: number): { deletedItem?: KurmaItem; all: KurmaItem[] } {
-    const items = this.getAll(year);
-    const target = items.find((i) => i.id === id);
-    const updated = items.filter((i) => i.id !== id);
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
-
-    // Persist deletion to Cloud Firestore
-    firestoreSync.deleteItem(year, id).catch((err) => {
-      console.warn('Firestore sync delete warning:', err);
-    });
-
-    if (target) {
-      this.addLog('DELETE', target.name, `Produk dihapus dari database tahun ${year}`);
-    }
-    return { deletedItem: target, all: updated };
+  // DELETE: Direct delete in Cloud Firestore
+  async delete(year: string, id: number, itemName?: string): Promise<void> {
+    await firestoreSync.deleteItem(year, id);
+    await firestoreSync.addLog('DELETE', itemName || `Produk #${id}`, `Dihapus dari Cloud Firestore (${year})`);
   },
 
-  bulkDelete(year: string, ids: Set<number> | number[]): KurmaItem[] {
-    const items = this.getAll(year);
-    const idSet = ids instanceof Set ? ids : new Set(ids);
-    const count = idSet.size;
-    const updated = items.filter((i) => !idSet.has(i.id));
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
-
-    // Persist batch deletion to Cloud Firestore
-    firestoreSync.bulkDeleteItems(year, Array.from(idSet)).catch((err) => {
-      console.warn('Firestore sync bulk delete warning:', err);
-    });
-
-    this.addLog('BULK_DELETE', `${count} Produk`, `Hapus massal ${count} item`);
-    return updated;
+  // BULK DELETE: Direct batch delete in Cloud Firestore
+  async bulkDelete(year: string, ids: Set<number> | number[]): Promise<void> {
+    const idList = ids instanceof Set ? Array.from(ids) : ids;
+    await firestoreSync.bulkDeleteItems(year, idList);
+    await firestoreSync.addLog('BULK_DELETE', `${idList.length} Produk`, `Hapus massal ${idList.length} produk dari database`);
   },
 
-  duplicate(year: string, id: number): KurmaItem[] {
-    const items = this.getAll(year);
-    const index = items.findIndex((i) => i.id === id);
-    if (index === -1) return items;
-
-    const original = items[index];
+  // DUPLICATE: Clone item and write to Cloud Firestore
+  async duplicate(year: string, original: KurmaItem): Promise<KurmaItem> {
     const copy: KurmaItem = {
       ...original,
       id: Date.now() + Math.floor(Math.random() * 1000),
       name: `${original.name} (Salinan)`
     };
 
-    const updated = [...items];
-    updated.splice(index + 1, 0, copy);
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
+    await firestoreSync.saveItem(year, copy);
+    await firestoreSync.addLog('CREATE', copy.name, `Duplikasi dari "${original.name}"`);
 
-    // Persist to Cloud Firestore
-    firestoreSync.saveItem(year, copy).catch((err) => {
-      console.warn('Firestore sync duplicate warning:', err);
-    });
-
-    this.addLog('CREATE', copy.name, `Duplikasi dari "${original.name}"`);
-    return updated;
+    return copy;
   },
 
-  restore(year: string, item: KurmaItem): KurmaItem[] {
-    const items = this.getAll(year);
-    const updated = [item, ...items];
-    localStorage.setItem(getItemsKey(year), JSON.stringify(updated));
-
-    // Persist restored item to Cloud Firestore
-    firestoreSync.saveItem(year, item).catch((err) => {
-      console.warn('Firestore sync restore warning:', err);
-    });
-
-    this.addLog('RESTORE', item.name, `Item dipulihkan kembali ke database`);
-    return updated;
+  // RESTORE: Restore deleted item directly to Cloud Firestore
+  async restore(year: string, item: KurmaItem): Promise<void> {
+    await firestoreSync.saveItem(year, item);
+    await firestoreSync.addLog('RESTORE', item.name, 'Produk dipulihkan kembali ke Cloud Firestore');
   },
 
-  resetToDefault(year: string): KurmaItem[] {
-    localStorage.setItem(getItemsKey(year), JSON.stringify(INITIAL_ITEMS));
-    localStorage.setItem(getNotesKey(year), JSON.stringify(INITIAL_NOTES));
-
-    // Overwrite / seed Firestore
-    firestoreSync.seedInitialIfEmpty(year, INITIAL_ITEMS, INITIAL_NOTES);
-
-    this.addLog('RESTORE', 'Database Kurma', 'Reset ke data bawaan awal');
-    return INITIAL_ITEMS;
+  // REORDER: Update order property in Firestore for all devices
+  async reorder(year: string, items: KurmaItem[]): Promise<void> {
+    await firestoreSync.reorderItems(year, items);
   },
 
-  // --- CRUD LOGS ---
-  getLogs(): CrudLogItem[] {
-    const raw = localStorage.getItem(LOGS_KEY);
-    if (!raw) return [];
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return [];
-    }
+  // APPLY GLOBAL DISCOUNT: Batch update online discounts across all items
+  async applyGlobalDiscount(year: string, items: KurmaItem[], disc1: number, disc2: number): Promise<void> {
+    const updates = items.map((i) => ({
+      id: i.id,
+      changes: { onlineDisc1: disc1, onlineDisc2: disc2 }
+    }));
+    await firestoreSync.bulkUpdateItems(year, updates);
+    await firestoreSync.addLog('UPDATE', 'Diskon Massal', `Disc 1: ${disc1}%, Disc 2: ${disc2}% diterapkan ke ${items.length} produk`);
   },
 
-  addLog(action: CrudLogItem['action'], itemName: string, details?: string) {
-    const current = this.getLogs();
-    const newLog: CrudLogItem = {
-      id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
-      action,
-      itemName,
-      details,
-      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    };
-    const updated = [newLog, ...current].slice(0, 40);
-    localStorage.setItem(LOGS_KEY, JSON.stringify(updated));
+  // RESET TO DEFAULT: Overwrites Firestore collection with initial items
+  async resetToDefault(year: string): Promise<void> {
+    await firestoreSync.seedInitialIfEmpty(year, INITIAL_ITEMS, INITIAL_NOTES);
+    await firestoreSync.addLog('RESTORE', 'Database Kurma', 'Reset data kurma ke default di Cloud Firestore');
   },
 
-  clearLogs() {
-    localStorage.removeItem(LOGS_KEY);
+  // LOGS
+  async addLog(action: CrudLogItem['action'], itemName: string, details?: string): Promise<void> {
+    await firestoreSync.addLog(action, itemName, details);
+  },
+
+  async clearLogs(): Promise<void> {
+    await firestoreSync.clearLogs();
   }
 };

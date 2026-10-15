@@ -1,5 +1,6 @@
 export interface KurmaItem {
   id: number;
+  order?: number;
   name: string;
   expDate: string;
   ecer: number;

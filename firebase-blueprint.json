@@ -165,6 +165,32 @@
         "$ref": "#/entities/DatabaseYear"
       },
       "description": "Koleksi tahun database aktif"
+    },
+    "/app_settings/{settingId}": {
+      "schema": {
+        "title": "AppSettings",
+        "description": "Pengaturan judul dan banner aplikasi",
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "marquee": { "type": "string" }
+        }
+      },
+      "description": "Pengaturan judul dan marquee aplikasi yang tersinkronisasi global"
+    },
+    "/crud_logs/{logId}": {
+      "schema": {
+        "title": "CrudLog",
+        "description": "Catatan log riwayat aktivitas CRUD produk",
+        "type": "object",
+        "properties": {
+          "action": { "type": "string" },
+          "itemName": { "type": "string" },
+          "timestamp": { "type": "string" },
+          "details": { "type": "string" }
+        }
+      },
+      "description": "Riwayat aktivitas CRUD real-time antar perangkat"
     }
   }
 }
