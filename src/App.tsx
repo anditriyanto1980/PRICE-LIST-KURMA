@@ -61,7 +61,7 @@ export default function App() {
   // --- DATABASE & APP STATE ---
   const [availableDBs, setAvailableDBs] = useState<string[]>(['2025']);
   const [activeDB, setActiveDB] = useState<string>('2025');
-  const [appTitle, setAppTitle] = useState<string>('PRICE LIST KURMA PRO');
+  const [appTitle, setAppTitle] = useState<string>('EKA - PRICELIST KURMA');
   const [marqueeText, setMarqueeText] = useState<string>(
     '⚠️ SEBELUM MEMAKAI APLIKASI INI SEBAIKNYA TARIK NAFAS DAN JANGAN HEMPASKAN 5 MENIT, NISCAYA HARGA YANG TERTERA 100% AKURAT, PERCAYALAH, PERCAYALAH, PERCAYALAH !!! ⚠️'
   );
@@ -152,7 +152,12 @@ export default function App() {
     setActiveDB(active);
 
     const savedTitle = localStorage.getItem('kurma_app_title');
-    if (savedTitle) setAppTitle(savedTitle);
+    if (savedTitle && savedTitle !== 'PRICE LIST KURMA PRO') {
+      setAppTitle(savedTitle);
+    } else {
+      setAppTitle('EKA - PRICELIST KURMA');
+      localStorage.setItem('kurma_app_title', 'EKA - PRICELIST KURMA');
+    }
 
     const savedMarquee = localStorage.getItem('kurma_marquee_text');
     if (savedMarquee) setMarqueeText(savedMarquee);
@@ -757,7 +762,8 @@ export default function App() {
                     setAppTitle(e.target.value);
                     localStorage.setItem('kurma_app_title', e.target.value);
                   }}
-                  className="text-xl sm:text-2xl font-heading font-extrabold text-gradient-gold bg-transparent border-none focus:ring-0 tracking-tight cursor-text"
+                  style={{ color: '#ffffff', WebkitTextFillColor: '#ffffff' }}
+                  className="text-xl sm:text-2xl font-heading font-extrabold text-white !text-white bg-transparent border-none focus:ring-0 tracking-wide cursor-text drop-shadow min-w-[280px] hover:opacity-90 transition-opacity"
                   title="Klik untuk mengedit judul pricelist"
                 />
 
@@ -1164,12 +1170,15 @@ export default function App() {
 
       {/* MAIN CONTENT AREA */}
       <div className="w-full px-4 sm:px-6 pb-12 flex-grow" id="capture-area">
-        {/* Printable Header */}
-        <div className="print-only mb-6 text-center">
-          <h1 className="text-3xl font-heading font-extrabold text-black uppercase border-b-2 border-black pb-1 mb-1">
-            {appTitle}
+        {/* Branded Header (Visible in exports and print) */}
+        <div className="mb-6 text-center">
+          <h1
+            style={{ color: '#ffffff' }}
+            className="text-2xl sm:text-3xl font-heading font-extrabold text-white !text-white uppercase tracking-wider border-b-2 border-slate-700/80 pb-2 mb-1.5 drop-shadow-sm"
+          >
+            {appTitle || 'EKA - PRICELIST KURMA'}
           </h1>
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-slate-300 font-medium tracking-wide">
             Katalog Dokumen Resmi Perusahaan • Dicetak pada {currentDateStr} • Database Tahun {activeDB}
           </p>
         </div>
