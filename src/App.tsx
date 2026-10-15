@@ -27,7 +27,9 @@ import {
   Sparkles,
   LayoutGrid,
   Table as TableIcon,
-  Cloud
+  Cloud,
+  Laptop,
+  RefreshCw
 } from 'lucide-react';
 import { KurmaItem, NoteItem, UserRole, StatusFilter, SortOption, ActiveTab, CrudLogItem } from './types';
 import { INITIAL_ITEMS, INITIAL_NOTES } from './initialData';
@@ -47,6 +49,7 @@ import { AuthModals } from './components/AuthModals';
 import { ImportModals } from './components/ImportModals';
 import { ImageZoomModal } from './components/ImageZoomModal';
 import { PartaiNoteModal } from './components/PartaiNoteModal';
+import { SyncCenterModal } from './components/SyncCenterModal';
 
 interface Toast {
   id: number;
@@ -106,6 +109,11 @@ export default function App() {
 
   const [partaiNoteItem, setPartaiNoteItem] = useState<KurmaItem | null>(null);
   const [isPartaiNoteOpen, setIsPartaiNoteOpen] = useState(false);
+
+  // Sync Center & Multi-Device
+  const [isSyncCenterOpen, setIsSyncCenterOpen] = useState(false);
+  const [localDataCount, setLocalDataCount] = useState<number>(0);
+  const [isMigrating, setIsMigrating] = useState<boolean>(false);
 
   // Menus
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
@@ -203,6 +211,99 @@ export default function App() {
       unsubNotes();
     };
   }, [activeDB]);
+
+  // Check if browser has legacy local data from previous sessions
+  useEffect(() => {
+    try {
+      const localRaw =
+        localStorage.getItem(`kurma_items_${activeDB}`) ||
+        localStorage.getItem('kurma_items_2025');
+      if (localRaw) {
+        const parsed = JSON.parse(localRaw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setLocalDataCount(parsed.length);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeDB]);
+
+  const handleUploadLocalToCloud = async () => {
+    setIsMigrating(true);
+    try {
+      const localRaw =
+        localStorage.getItem(`kurma_items_${activeDB}`) ||
+        localStorage.getItem('kurma_items_2025');
+      const notesRaw =
+        localStorage.getItem(`kurma_notes_${activeDB}`) ||
+        localStorage.getItem('kurma_notes_2025');
+
+      let uploadedItemsCount = 0;
+      let itemsList: KurmaItem[] = [];
+      if (localRaw) {
+        try {
+          const parsed = JSON.parse(localRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) itemsList = parsed;
+        } catch {
+          // ignore
+        }
+      }
+      if (itemsList.length === 0 && items.length > 0) {
+        itemsList = items;
+      }
+
+      if (itemsList.length > 0) {
+        for (const it of itemsList) {
+          await firestoreSync.saveItem(activeDB, it);
+          uploadedItemsCount++;
+        }
+      }
+
+      if (notesRaw) {
+        try {
+          const parsedNotes = JSON.parse(notesRaw);
+          if (Array.isArray(parsedNotes)) {
+            for (const n of parsedNotes) {
+              await firestoreSync.saveNote(activeDB, n);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      } else if (notes.length > 0) {
+        for (const n of notes) {
+          await firestoreSync.saveNote(activeDB, n);
+        }
+      }
+
+      // Ensure year & settings are in cloud
+      await firestoreSync.saveYear(activeDB);
+      await firestoreSync.saveSettings(appTitle, marqueeText);
+      await firestoreSync.addLog('RESTORE', 'Sinkronisasi Multi-Laptop', `${uploadedItemsCount} produk diunggah ke Cloud Firestore`);
+
+      showToast(`Sukses! ${uploadedItemsCount} produk berhasil diunggah ke Cloud Firestore. Semua laptop lain akan otomatis menampilkan data yang sama!`);
+      setLocalDataCount(0);
+    } catch {
+      showToast('Gagal menyinkronkan data ke Cloud', 'error');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const handleForceRefreshCloud = () => {
+    setSelectedIds(new Set());
+    firestoreSync.subscribeItems(
+      activeDB,
+      (remoteItems) => {
+        setItems(remoteItems);
+        showToast(`Data Cloud berhasil dimuat ulang! (${remoteItems.length} produk)`);
+      },
+      () => {
+        showToast('Gagal memuat ulang data dari Cloud', 'error');
+      }
+    );
+  };
 
   const handleSwitchDB = (year: string) => {
     setActiveDB(year);
@@ -706,6 +807,40 @@ export default function App() {
         </div>
       )}
 
+      {/* LOCAL STORAGE TO CLOUD SYNC ALERT BANNER */}
+      {localDataCount > 0 && (
+        <div className="w-full bg-amber-950/90 border-b border-amber-500/50 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-amber-200 text-xs no-print shadow-md">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '4s' }} />
+            <span>
+              <strong>Perhatian Sinkronisasi Laptop:</strong> Terdeteksi <strong>{localDataCount} produk</strong> di memori browser laptop ini dari sesi sebelumnya. Ingin mengunggahnya ke Cloud Firestore agar laptop lain langsung menampilkan data yang sama?
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleUploadLocalToCloud}
+              disabled={isMigrating}
+              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 shadow transition-all active:scale-95 disabled:opacity-50"
+            >
+              <Upload className="w-3.5 h-3.5" /> {isMigrating ? 'Mengunggah ke Cloud...' : 'Unggah ke Cloud Sekarang'}
+            </button>
+            <button
+              onClick={() => setIsSyncCenterOpen(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1.5 rounded-lg text-xs border border-slate-700 transition-colors"
+            >
+              Detail Sinkron
+            </button>
+            <button
+              onClick={() => setLocalDataCount(0)}
+              className="text-amber-400/80 hover:text-white px-2 py-1 text-xs"
+              title="Abaikan notifikasi ini"
+            >
+              Abaikan
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* TOP MARQUEE ANNOUNCEMENT BAR */}
       <div className="w-full bg-slate-950/90 border-b border-slate-800 py-1.5 overflow-hidden flex items-center no-print">
         <div className="w-full overflow-hidden relative h-5">
@@ -825,16 +960,18 @@ export default function App() {
                   <span>{isAdmin ? 'Mode Kelola (CRUD Aktif)' : 'Mode Tamu (View Only)'}</span>
                 </button>
 
-                {/* Cloud Firestore Live Status Badge */}
-                <div
-                  className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-teal-500/30 bg-teal-950/40 text-[11px] font-bold text-teal-300"
-                  title="Database Cloud Firestore aktif dan tersinkronisasi"
+                {/* Cloud Firestore Live Status Badge (Clickable to open Sync Center) */}
+                <button
+                  type="button"
+                  onClick={() => setIsSyncCenterOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border border-teal-500/40 bg-teal-950/50 hover:bg-teal-900/60 text-[11px] font-bold text-teal-300 transition-all cursor-pointer shadow-sm"
+                  title="Klik untuk membuka Pusat Sinkronisasi Multi-Device"
                 >
                   <Cloud className="w-3.5 h-3.5 text-teal-400" />
                   <span>
                     Firestore: {isCloudConnected ? 'Terhubung (Cloud Live)' : 'Tersinkronisasi'}
                   </span>
-                </div>
+                </button>
               </div>
             </div>
 
@@ -850,6 +987,17 @@ export default function App() {
                 className="bg-teal-600 hover:bg-teal-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-teal-950/60 transition-all border border-teal-400/40 hover:scale-[1.02] active:scale-[0.98]"
               >
                 <Plus className="w-4 h-4" /> Tambah Kurma Baru
+              </button>
+
+              {/* Multi-Device Sync Center Button */}
+              <button
+                type="button"
+                onClick={() => setIsSyncCenterOpen(true)}
+                className="bg-teal-950/80 hover:bg-teal-900/90 border border-teal-500/50 text-teal-200 hover:text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                title="Buka Pusat Sinkronisasi Multi-Laptop / Multi-Perangkat"
+              >
+                <Laptop className="w-4 h-4 text-teal-400" />
+                <span className="hidden sm:inline">Sinkronkan Laptop</span>
               </button>
 
               {/* CRUD Activity Log */}
@@ -1418,6 +1566,18 @@ export default function App() {
           setPartaiNoteItem(null);
         }}
         onSaveNote={handleSavePartaiNote}
+      />
+
+      <SyncCenterModal
+        isOpen={isSyncCenterOpen}
+        onClose={() => setIsSyncCenterOpen(false)}
+        isCloudConnected={isCloudConnected}
+        activeDB={activeDB}
+        itemsCount={items.length}
+        notesCount={notes.length}
+        localItemsCount={localDataCount}
+        onUploadLocalToCloud={handleUploadLocalToCloud}
+        onForceRefreshCloud={handleForceRefreshCloud}
       />
     </div>
   );
