@@ -11,8 +11,6 @@ import {
   FileSpreadsheet,
   Download,
   Upload,
-  ClipboardPaste,
-  Sheet,
   Key,
   LogOut,
   LogIn,
@@ -102,7 +100,6 @@ export default function App() {
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
 
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
-  const [isTextImportOpen, setIsTextImportOpen] = useState(false);
 
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [zoomTitle, setZoomTitle] = useState<string>('');
@@ -124,7 +121,6 @@ export default function App() {
   const [audioSource, setAudioSource] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const musicFileInputRef = useRef<HTMLInputElement | null>(null);
-  const restoreFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -618,65 +614,6 @@ export default function App() {
     }
   };
 
-  // Backups
-  const handleBackupDownload = () => {
-    const backupData = {
-      version: '2.5',
-      exportDate: new Date().toISOString(),
-      year: activeDB,
-      appTitle,
-      items,
-      notes
-    };
-    const jsonStr = JSON.stringify(backupData, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Backup_Kurma_${activeDB}_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('File backup JSON berhasil diunduh!');
-  };
-
-  const handleRestoreFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const data = JSON.parse(event.target?.result as string);
-          if (data && Array.isArray(data.items)) {
-            if (
-              confirm(
-                `Restore file backup ini ke Cloud Database ${activeDB}? Semua perangkat akan menerima data ini secara real-time.`
-              )
-            ) {
-              for (const it of data.items) {
-                await firestoreSync.saveItem(activeDB, it);
-              }
-              if (Array.isArray(data.notes)) {
-                for (const n of data.notes) {
-                  await firestoreSync.saveNote(activeDB, n);
-                }
-              }
-              await kurmaService.addLog('RESTORE', 'Restore File Backup', `${data.items.length} produk diimpor ke Cloud`);
-              showToast('Data berhasil direstore ke Cloud Firestore!');
-            }
-          } else {
-            showToast('Format file backup tidak valid!', 'error');
-          }
-        } catch {
-          showToast('Gagal membaca file JSON!', 'error');
-        }
-      };
-      reader.readAsText(file);
-    }
-    e.target.value = '';
-  };
-
   // Filters & Sorting
   const filteredAndSortedItems = useMemo(() => {
     let result = items.filter((item) => {
@@ -743,13 +680,6 @@ export default function App() {
         ref={musicFileInputRef}
         accept="audio/*"
         onChange={handleUploadAudio}
-        className="hidden"
-      />
-      <input
-        type="file"
-        ref={restoreFileInputRef}
-        accept=".json"
-        onChange={handleRestoreFileInput}
         className="hidden"
       />
 
@@ -1086,54 +1016,19 @@ export default function App() {
                 </button>
                 {isDataMenuOpen && (
                   <div className="absolute right-0 mt-2 w-64 bg-slate-900 rounded-2xl shadow-2xl z-50 border border-slate-700 p-2 overflow-hidden">
-                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      Ekspor & Download
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <FileSpreadsheet className="w-3.5 h-3.5" /> File Excel
                     </div>
                     <button
                       type="button"
                       onClick={() => {
                         setIsDataMenuOpen(false);
                         exportToExcel(items, activeDB);
-                        showToast('File Excel diunduh!');
+                        showToast('File Excel (.xlsx) berhasil diunduh!');
                       }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors text-left"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors text-left font-medium"
                     >
-                      <FileSpreadsheet className="w-4 h-4" /> Download Excel (.xlsx)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDataMenuOpen(false);
-                        handleBackupDownload();
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 rounded-lg transition-colors text-left"
-                    >
-                      <Download className="w-4 h-4 text-sky-400" /> Backup Data (.json)
-                    </button>
-
-                    <div className="my-1.5 border-t border-slate-800" />
-                    <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                      Restore & Import
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDataMenuOpen(false);
-                        restoreFileInputRef.current?.click();
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-blue-400 hover:bg-slate-800 rounded-lg transition-colors text-left"
-                    >
-                      <Upload className="w-4 h-4" /> Restore File (.json)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDataMenuOpen(false);
-                        setIsTextImportOpen(true);
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-teal-300 hover:bg-slate-800 rounded-lg transition-colors text-left"
-                    >
-                      <ClipboardPaste className="w-4 h-4" /> Restore dari Teks JSON
+                      <Download className="w-4 h-4" /> Ekspor File Excel (.xlsx)
                     </button>
                     <button
                       type="button"
@@ -1141,9 +1036,9 @@ export default function App() {
                         setIsDataMenuOpen(false);
                         setIsExcelImportOpen(true);
                       }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-green-400 hover:bg-slate-800 rounded-lg transition-colors text-left"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 rounded-lg transition-colors text-left font-medium"
                     >
-                      <Sheet className="w-4 h-4" /> Import Salinan Excel
+                      <Upload className="w-4 h-4 text-emerald-400" /> Impor File Excel (.xlsx)
                     </button>
 
                     <div className="my-1.5 border-t border-slate-800" />
@@ -1530,26 +1425,27 @@ export default function App() {
 
       <ImportModals
         isExcelOpen={isExcelImportOpen}
-        isTextOpen={isTextImportOpen}
         onCloseExcel={() => setIsExcelImportOpen(false)}
-        onCloseText={() => setIsTextImportOpen(false)}
-        onImportExcelItems={async (newItems) => {
-          for (const it of newItems) {
-            await kurmaService.create(activeDB, it);
-          }
-          showToast(`${newItems.length} produk Excel berhasil diimpor ke Cloud!`);
-        }}
-        onRestoreBackup={async (restoredItems, restoredNotes) => {
-          for (const it of restoredItems) {
-            await firestoreSync.saveItem(activeDB, it);
-          }
-          for (const n of restoredNotes) {
-            await firestoreSync.saveNote(activeDB, n);
-          }
-          await kurmaService.addLog('RESTORE', 'Restore Teks JSON', `${restoredItems.length} produk diimpor ke Cloud`);
-          showToast('Data teks berhasil direstore ke Cloud Firestore!');
-        }}
+        activeDB={activeDB}
         showToast={showToast}
+        onImportExcelItems={async (newItems, mode) => {
+          try {
+            if (mode === 'replace' && items.length > 0) {
+              await kurmaService.bulkDelete(activeDB, items.map((i) => i.id));
+            }
+            for (const it of newItems) {
+              await kurmaService.create(activeDB, it);
+            }
+            await kurmaService.addLog(
+              'RESTORE',
+              'Impor File Excel',
+              `${newItems.length} produk diimpor ke Cloud (${mode === 'replace' ? 'Ganti Total' : 'Tambah'})`
+            );
+            showToast(`${newItems.length} produk Excel berhasil disimpan ke Cloud Firestore!`);
+          } catch {
+            showToast('Gagal menyimpan produk Excel ke Cloud', 'error');
+          }
+        }}
       />
 
       <ImageZoomModal
